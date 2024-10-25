@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebRTC CCTV Camera</title>
+</head>
+<body>
+    <h2>WebRTC CCTV Camera View</h2>
+    <p>Local video feed (as CCTV camera)</p>
+    <video id="localVideo" autoplay muted playsinline style="width: 300px; border: 1px solid #ccc;"></video>
+    <p>Remote viewer (other devices)</p>
+    <video id="remoteVideo" autoplay playsinline style="width: 300px; border: 1px solid #ccc;"></video>
+
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <script>
+        const socket = io('https://your-app-name.onrender.com');
+        //const socket = io('http://localhost:5000'); // URL of signaling server
+        const configuration = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+        let localStream;
+        let peerConnection;
+
+        // Capture the local webcam stream
+        async function startLocalStream() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('localVideo').srcObject = localStream;
+            } catch (error) {
+                console.error('Error accessing media devices:', error);
+            }
+        }
+
+        // Create and send WebRTC offer
+        async function createOffer() {
+            peerConnection = new RTCPeerConnection(configuration);
+
+            // Add local stream to the peer connection
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+
+            // Send any ICE candidates to the other peer
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    socket.emit('ice-candidate', event.candidate);
+                }
+            };
+
+            // Display the remote stream
+            peerConnection.ontrack = event => {
+                document.getElementById('remoteVideo').srcObject = event.streams[0];
+            };
+
+            // Create an offer and send it to the signaling server
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            socket.emit('offer', offer);
+        }
+
+        // Handle incoming offer
+        async function handleOffer(offer) {
+            peerConnection = new RTCPeerConnection(configuration);
+
+            // Display the remote stream
+            peerConnection.ontrack = event => {
+                document.getElementById('remoteVideo').srcObject = event.streams[0];
+            };
+
+            // Send any ICE candidates to the other peer
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    socket.emit('ice-candidate', event.candidate);
+                }
+            };
+
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+            socket.emit('answer', answer);
+        }
+
+        // Handle incoming answer
+        async function handleAnswer(answer) {
+            await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        }
+
+        // Handle incoming ICE candidates
+        async function handleIceCandidate(candidate) {
+            await peerConnection.addIceCandidate(candidate);
+        }
+
+        // Signaling events
+        socket.on('offer', handleOffer);
+        socket.on('answer', handleAnswer);
+        socket.on('ice-candidate', handleIceCandidate);
+
+        // Start the local video feed and send the offer when the page loads
+        window.onload = async () => {
+            await startLocalStream();
+            createOffer();
+        };
+    </script>
+</body>
+</html>
